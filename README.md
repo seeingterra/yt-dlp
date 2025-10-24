@@ -1,3 +1,45 @@
+<!-- Added monitor GUI and features -->
+<div align="center">
+
+## Additional features and GUI (by Tommy A. Hansen)
+
+This repository includes additional features and a web-based GUI monitor implemented in `devscripts/web_monitor.py` contributed by Tommy A. Hansen.
+
+Key additions:
+
+- Web GUI monitor (Flask) at `devscripts/web_monitor.py` with a client UI in `devscripts/templates/index.html`.
+- Add/remove channels, per-channel Start/Stop/Reset, view active downloads, logs, and per-download pause.
+- Automatic resume using per-channel download archives (`--download-archive`).
+- Support and heuristics for Rumble and Odysee channels.
+- Per-video metadata files (`.txt`) and per-video thumbnail download saved next to video files.
+- Files tab with live search and Save-As download support.
+
+Quick install & run
+
+Windows (PowerShell):
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r devscripts/requirements-web.txt
+python -u devscripts/web_monitor.py --channels devscripts/channels.txt --output-dir downloads --archive-dir .archives --host 127.0.0.1 --port 8080
+```
+
+Linux / macOS (bash):
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r devscripts/requirements-web.txt
+python3 devscripts/web_monitor.py --channels devscripts/channels.txt --output-dir downloads --archive-dir .archives --host 127.0.0.1 --port 8080
+```
+
+Notes:
+
+- Use `--host 0.0.0.0` to listen on all interfaces and a reverse proxy (e.g., nginx) or systemd to run in production.
+- The channels file is `devscripts/channels.txt`. Per-channel archives and logs are stored in `.archives/` by default.
+- For dependencies used by the web monitor, see `devscripts/requirements-web.txt`.
+
+----
+
 <!-- MANPAGE: BEGIN EXCLUDED SECTION -->
 <div align="center">
 
