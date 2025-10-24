@@ -1,9 +1,9 @@
 <!-- Added monitor GUI and features -->
 <div align="center">
 
-## Additional features and GUI (by Tommy A. Hansen)
+## Additional features and GUI 
 
-This repository includes additional features and a web-based GUI monitor implemented in `devscripts/web_monitor.py` contributed by Tommy A. Hansen.
+This repository includes additional features and a web-based GUI monitor implemented in `devscripts/web_monitor.py`
 
 Key additions:
 
