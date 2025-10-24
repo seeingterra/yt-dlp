@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>yt-dlp Channel Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      pre.log { max-height: 300px; overflow:auto; background:#111; color:#dcdcdc; padding:10px; }
+      .status-running { color: green; font-weight:600 }
+      .status-failed { color: red; font-weight:600 }
+      /* Modern button and card styling */
+      .btn-modern { border-radius: 14px; padding: .45rem .9rem; box-shadow: 0 6px 18px rgba(0,0,0,0.08); }
+      .card { border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.06); }
+      .list-group-item { border-radius: 10px; margin-bottom: 6px; }
+      .small-muted { color: #6c757d; }
+      /* thumbnail styling */
+      .thumb-border { border: 2px solid rgba(0,0,0,0.06); box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+  /* Ensure footer is visible in dark mode */
+  footer.small.text-muted { color: #6c757d; }
+  body.bg-dark footer.small.text-muted { color: rgba(220,220,220,0.95) !important; }
+  body.bg-dark footer.small.text-muted a { color: #9ecbff !important; }
+    </style>
+  </head>
+  <body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark mb-3">
+      <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1">yt-dlp Channel Monitor</span>
+        <div>
+          <button id="reload_btn" class="btn btn-outline-light me-2" type="button">Reload now</button>
+          <button id="theme_btn" class="btn btn-outline-light" type="button">Toggle Theme</button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4">
+          <h5>Add channel</h5>
+          <div class="input-group mb-3">
+            <input id="ch_url" type="text" class="form-control" placeholder="Channel URL">
+            <button class="btn btn-primary" id="add_btn" type="button">Add</button>
+          </div>
+          <div id="add_feedback" class="mb-3"></div>
+
+          <h5>Channels</h5>
+          <ul id="channel_list" class="list-group mb-3"></ul>
+        </div>
+        <div class="col-md-8">
+          <ul class="nav nav-tabs mb-3" id="monitorTabs" role="tablist">
+            <li class="nav-item" role="presentation"><button class="nav-link active" id="tab-status" data-bs-toggle="tab" data-bs-target="#tab-monitor-pane" type="button">Monitor</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="tab-files" data-bs-toggle="tab" data-bs-target="#tab-files-pane" type="button">Files</button></li>
+            <li class="nav-item" role="presentation"><button class="nav-link" id="tab-settings" data-bs-toggle="tab" data-bs-target="#tab-settings-pane" type="button">Settings</button></li>
+          </ul>
+          <div class="tab-content">
+            <div class="tab-pane fade show active" id="tab-monitor-pane">
+              <div class="mb-2">
+                <button id="start_sync" class="btn btn-sm btn-success me-2" type="button">Start Sync</button>
+                <button id="stop_sync" class="btn btn-sm btn-danger" type="button">Stop Sync</button>
+                <span id="sync_status" class="ms-3 small text-muted">Sync: stopped</span>
+              </div>
+              <h5>Status</h5>
+              <div id="channels_container"></div>
+            </div>
+            <div class="tab-pane fade" id="tab-files-pane">
+              <div class="mb-3 d-flex">
+                <input id="file_q" class="form-control me-2" placeholder="Search downloaded files">
+                <button id="file_search" class="btn btn-primary">Search</button>
+              </div>
+              <div id="files_container"></div>
+            </div>
+            <div class="tab-pane fade" id="tab-settings-pane">
+              <h6>Output directory</h6>
+              <div class="input-group mb-2">
+                <input id="out_dir" type="text" class="form-control" placeholder="Output directory">
+                <button id="save_out" class="btn btn-primary" type="button">Save</button>
+                <button id="check_out" class="btn btn-outline-secondary" type="button">Check Permissions</button>
+              </div>
+              <div id="out_feedback"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+      // Theme detection + toggle
+      function applyTheme(dark){
+        if(dark){
+          document.body.classList.add('bg-dark','text-light');
+          document.body.classList.remove('bg-light');
+        }else{
+          document.body.classList.remove('bg-dark','text-light');
+          document.body.classList.add('bg-light');
+        }
+      }
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      let darkMode = prefersDark;
+      applyTheme(darkMode);
+      document.addEventListener('DOMContentLoaded', ()=>{
+        const themeBtn = document.getElementById('theme_btn'); if(themeBtn) themeBtn.addEventListener('click', ()=>{ darkMode = !darkMode; applyTheme(darkMode); });
+        const addBtn = document.getElementById('add_btn'); if(addBtn) addBtn.addEventListener('click', addChannel);
+        const reloadBtn = document.getElementById('reload_btn'); if(reloadBtn) reloadBtn.addEventListener('click', ()=>{ fetch('/api/reload',{method:'POST'}).then(()=>loadStatus()); });
+        const startBtn = document.getElementById('start_sync'); if(startBtn) startBtn.addEventListener('click', startSync);
+        const stopBtn = document.getElementById('stop_sync'); if(stopBtn) stopBtn.addEventListener('click', stopSync);
+        const saveOut = document.getElementById('save_out'); if(saveOut) saveOut.addEventListener('click', saveOutputDir);
+        const checkOut = document.getElementById('check_out'); if(checkOut) checkOut.addEventListener('click', checkOutputPath);
+        const fileSearch = document.getElementById('file_search'); if(fileSearch) fileSearch.addEventListener('click', ()=>{ const q = document.getElementById('file_q').value.trim(); loadFiles(q); });
+        const fileQ = document.getElementById('file_q'); if(fileQ){
+          const live = debounce(()=>{ loadFiles(fileQ.value.trim()); }, 300);
+          fileQ.addEventListener('input', live);
+          fileQ.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); loadFiles(fileQ.value.trim()); } });
+        }
+        // when switching to files/settings tabs, load files or set active pane
+        const tabFiles = document.getElementById('tab-files');
+        const tabSettings = document.getElementById('tab-settings');
+        const tabStatus = document.getElementById('tab-status');
+        const panes = {
+          'tab-status': document.getElementById('tab-monitor-pane'),
+          'tab-files': document.getElementById('tab-files-pane'),
+          'tab-settings': document.getElementById('tab-settings-pane')
+        };
+        function activateTab(id){
+          ['tab-status','tab-files','tab-settings'].forEach(k=>{
+            const btn = document.getElementById(k);
+            const pane = panes[k];
+            if(btn) btn.classList.toggle('active', k===id);
+            if(pane){
+              if(k===id){ pane.classList.add('show','active'); pane.style.display = 'block'; }
+              else { pane.classList.remove('show','active'); pane.style.display = 'none'; }
+            }
+          });
+          if(id==='tab-files') loadFiles();
+        }
+  if(tabStatus) tabStatus.addEventListener('click', ()=>activateTab('tab-status'));
+  if(tabFiles) tabFiles.addEventListener('click', ()=>activateTab('tab-files'));
+  if(tabSettings) tabSettings.addEventListener('click', ()=>activateTab('tab-settings'));
+  // ensure initial tab visibility
+  activateTab('tab-status');
+        // load config to populate fields
+        loadConfig();
+      });
+  const STATUS_POLL = 5000;
+  // map url -> DOM elements for in-place updates
+  const channelElems = new Map();
+
+      async function apiGet(path){
+        const r = await fetch(path);
+        if(!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+  }
+
+      async function apiPost(path, body){
+        const r = await fetch(path, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+        const j = await r.json().catch(()=>({}));
+        return {ok: r.ok, json: j};
+      }
+
+      async function toggleLog(url, logPre){
+        if(!logPre.classList.contains('d-none')){ logPre.classList.add('d-none'); return; }
+        logPre.textContent = 'Loading...';
+        logPre.classList.remove('d-none');
+        try{
+          const r = await apiGet('/api/log?channel=' + encodeURIComponent(url));
+          logPre.textContent = r.lines.join('\n');
+        }catch(e){ logPre.textContent = 'Failed to load log: ' + e; }
+      }
+
+      async function loadStatus(){
+        try{
+          const list = await apiGet('/api/status');
+          updateChannels(list);
+          // also refresh config indicator
+          try{ loadConfig(); }catch(e){}
+          // update sync indicator
+          try{
+            const running = list.some(ch => ch.is_running);
+            document.getElementById('sync_status').textContent = 'Sync: ' + (running ? 'running' : (list.length? 'idle':'stopped'));
+          }catch(e){}
+        }catch(e){
+          document.getElementById('channels_container').innerHTML = `<div class="alert alert-danger">Failed to fetch status: ${e}</div>`;
+        }
+      }
+
+      async function loadConfig(){
+        try{
+          const cfg = await apiGet('/api/config');
+          if(cfg && cfg.ok){
+            const out = document.getElementById('out_dir'); if(out) out.value = cfg.out_dir || '';
+            const enabled = cfg.enabled;
+            const startBtn = document.getElementById('start_sync'); const stopBtn = document.getElementById('stop_sync');
+            if(startBtn) startBtn.disabled = !!enabled;
+            if(stopBtn) stopBtn.disabled = !enabled;
+            const status = document.getElementById('sync_status'); if(status) status.textContent = 'Sync: ' + (enabled? 'running':'stopped');
+          }
+        }catch(e){ /* ignore */ }
+      }
+
+      async function startSync(){
+        try{
+          const res = await apiPost('/api/sync/start', {});
+          if(res.ok){ document.getElementById('sync_status').textContent = 'Sync: running'; loadStatus(); }
+        }catch(e){ alert('Failed to start: '+e); }
+      }
+
+      async function stopSync(){
+        try{
+          const res = await apiPost('/api/sync/stop', {});
+          if(res.ok){ document.getElementById('sync_status').textContent = 'Sync: stopped'; loadStatus(); }
+        }catch(e){ alert('Failed to stop: '+e); }
+      }
+
+      async function saveOutputDir(){
+        const path = document.getElementById('out_dir').value.trim();
+        const fb = document.getElementById('out_feedback'); fb.innerHTML='';
+        if(!path){ fb.innerHTML = '<div class="alert alert-warning">Enter a path</div>'; return; }
+        try{
+          const res = await apiPost('/api/config', {output_dir: path});
+          if(res.ok){ fb.innerHTML = '<div class="alert alert-success">Saved</div>'; } else { fb.innerHTML = '<div class="alert alert-danger">Failed to save</div>'; }
+        }catch(e){ fb.innerHTML = '<div class="alert alert-danger">Failed: '+e+'</div>'; }
+      }
+
+      async function checkOutputPath(){
+        const path = document.getElementById('out_dir').value.trim();
+        const fb = document.getElementById('out_feedback'); fb.innerHTML='Checking...';
+        try{
+          const r = await apiPost('/api/check-path', {path});
+          if(r.json && r.json.ok){ fb.innerHTML = '<div class="alert alert-success">Writable</div>'; }
+          else { fb.innerHTML = `<div class="alert alert-danger">${r.json.msg||'Not writable'}</div>`; }
+        }catch(e){ fb.innerHTML = '<div class="alert alert-danger">Failed: '+e+'</div>'; }
+      }
+
+      async function loadFiles(q=''){
+        const container = document.getElementById('files_container');
+        container.innerHTML = 'Loading...';
+        try{
+          // fetch files and current active downloads so we can highlight downloading files
+          const [j, status] = await Promise.all([
+            apiGet('/api/files' + (q?('?q='+encodeURIComponent(q)):'')),
+            apiGet('/api/status')
+          ]);
+          if(!j.ok){ container.innerHTML = '<div class="alert alert-danger">Failed to enumerate files</div>'; return; }
+          if(!j.files.length){ container.innerHTML = '<div class="text-muted">No files</div>'; return; }
+          // collect active filenames
+          const activeNames = new Set();
+          (status||[]).forEach(ch=>{ (ch.active_items||[]).forEach(it=>{ activeNames.add(it.name.split('\\').pop().split('/').pop()); }) });
+          const list = document.createElement('div'); list.className='list-group';
+          j.files.forEach(f=>{
+            const item = document.createElement('div'); item.className='list-group-item d-flex justify-content-between align-items-center';
+            const left = document.createElement('div'); left.style.flex='1';
+            const name = document.createElement('div'); name.className='fw-semibold'; name.textContent = f.relpath;
+            const meta = document.createElement('div'); meta.className='small text-muted'; meta.textContent = `${(f.size/1024/1024).toFixed(2)} MiB • ${new Date(f.mtime*1000).toLocaleString()}`;
+            left.appendChild(name); left.appendChild(meta);
+            const right = document.createElement('div'); right.className='d-flex gap-2 align-items-center';
+            // download link (triggers Save As)
+            const dl = document.createElement('a'); dl.className='btn btn-sm btn-primary'; dl.title='Download'; dl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M.5 9.9a.5.5 0 0 1 .5.5V13a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-2.6a.5.5 0 0 1 1 0V13a3 3 0 0 1-3 3H3a3 3 0 0 1-3-3V10.4a.5.5 0 0 1 .5-.5z"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 1 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/></svg>';
+            dl.href = '/download?relpath=' + encodeURIComponent(f.relpath);
+            dl.setAttribute('role','button');
+            dl.setAttribute('target','_blank');
+            // open in new tab to let browser prompt save-as
+            right.appendChild(dl);
+            // quick open (view) - same as download but without attachment could be implemented later
+            if(activeNames.has(f.path.split('\\').pop().split('/').pop())){
+              const badge = document.createElement('span'); badge.className='badge bg-warning text-dark ms-2'; badge.textContent='Downloading'; right.appendChild(badge);
+              item.classList.add('border','border-warning');
+            }
+            item.appendChild(left); item.appendChild(right); list.appendChild(item);
+          });
+          container.innerHTML = ''; container.appendChild(list);
+        }catch(e){ container.innerHTML = '<div class="alert alert-danger">Failed: '+e+'</div>'; }
+      }
+
+      // live search: debounce helper
+      function debounce(fn, delay){ let t = null; return function(...args){ if(t) clearTimeout(t); t = setTimeout(()=>fn(...args), delay); } }
+
+      function makeChannelCard(ch){
+        const card = document.createElement('div');
+        card.className = 'card mb-3';
+        const cardBody = document.createElement('div'); cardBody.className='card-body';
+        const header = document.createElement('div'); header.className = 'd-flex align-items-center mb-2';
+        // thumbnail
+        if(ch.thumbnail){
+          const img = document.createElement('img'); img.src = ch.thumbnail; img.className='rounded-circle me-3 thumb-border'; img.style.width='48px'; img.style.height='48px'; img.style.objectFit='cover'; header.appendChild(img);
+        }
+        const h5 = document.createElement('h5'); h5.className='card-title mb-0'; h5.textContent = ch.display_name || ch.url; header.appendChild(h5);
+        cardBody.appendChild(header);
+        const badges = document.createElement('p'); badges.innerHTML = `Status: <span class="badge bg-${ch.is_running? 'success' : (ch.last_status && ch.last_status.startsWith('failed')? 'danger':'secondary')}">${ch.is_running? 'running' : (ch.last_status || 'idle')}</span>`;
+  const meta = document.createElement('p'); meta.className='small text-muted'; meta.textContent = `Last run: ${ch.last_run||'N/A'} • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`;
+        // channel-level progress container
+        const chanProgressWrap = document.createElement('div'); chanProgressWrap.className = 'mb-2';
+        const chanProgressBar = document.createElement('div'); chanProgressBar.className = 'progress';
+        const chanBar = document.createElement('div'); chanBar.className = 'progress-bar'; chanBar.style.width = '0%'; chanBar.textContent = '';
+        chanProgressBar.appendChild(chanBar);
+        const chanCounter = document.createElement('div'); chanCounter.className = 'small text-muted mt-1'; chanCounter.textContent = '';
+        chanProgressWrap.appendChild(chanProgressBar); chanProgressWrap.appendChild(chanCounter);
+  const logBtn = document.createElement('button'); logBtn.className='btn btn-sm btn-outline-secondary me-2 mb-2'; logBtn.title='Show log'; logBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 7a.5.5 0 0 1 0-1h5a.5.5 0 0 1 0 1h-5zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"/><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h6.5L14 4.5zM13.5 4L10 0.5V4a.5.5 0 0 0 .5.5H13.5z"/></svg>';
+        const logPre = document.createElement('pre'); logPre.className='log d-none'; logPre.setAttribute('data-url', ch.url);
+        logBtn.onclick = async ()=>{ toggleLog(ch.url, logPre); };
+        // action buttons moved below title for cleaner layout
+        const actionsRow = document.createElement('div'); actionsRow.className = 'mb-2';
+  const delBtn = document.createElement('button'); delBtn.className='btn btn-sm btn-outline-danger me-2'; delBtn.title='Remove channel'; delBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 .5-.5zM8 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6A.5.5 0 0 1 8 5.5zM10.5 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 .5-.5z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1 0-2h3.11a1 1 0 0 1 .9-.6h2.98c.35 0 .68.21.9.6H14.5a1 1 0 0 1 1 1zM4.118 4L4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118z"/></svg>';
+  const resetBtn = document.createElement('button'); resetBtn.className='btn btn-sm btn-outline-secondary me-2'; resetBtn.title='Reset channel state'; resetBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 1 1 .908-.418A6 6 0 1 1 8 2v1z"/><path d="M8 1a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1H8A1 1 0 0 1 7 4V1.5A.5.5 0 0 1 8 1z"/></svg>';
+        resetBtn.onclick = async ()=>{ if(!confirm('Reset channel state (archive and logs)?')) return; const del = confirm('Also delete files in the channel output directory? (This will remove files permanently)'); try{ const r = await fetch('/api/channel/reset',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: ch.url, clear_out: del})}); if(r.ok){ await loadStatus(); alert('Channel reset'); } else { alert('Reset failed'); } }catch(e){ alert('Reset failed: '+e); } };
+        actionsRow.appendChild(delBtn); actionsRow.appendChild(resetBtn);
+        cardBody.appendChild(h5); cardBody.appendChild(badges); cardBody.appendChild(meta); cardBody.appendChild(actionsRow); cardBody.appendChild(chanProgressWrap); cardBody.appendChild(logBtn); cardBody.appendChild(logPre);
+        card.appendChild(cardBody);
+        return {card, cardBody, badges, meta, logPre};
+      }
+
+      function updateChannels(list){
+        const container = document.getElementById('channels_container');
+        const chlist = document.getElementById('channel_list');
+        // maintain left list
+        chlist.innerHTML = '';
+        const seen = new Set();
+        list.forEach(ch=>{
+          seen.add(ch.url);
+          // left panel
+          const li = document.createElement('li'); li.className='list-group-item d-flex justify-content-between align-items-start';
+          const name = document.createElement('div'); name.textContent = ch.url;
+          const btns = document.createElement('div');
+          const rem = document.createElement('button'); rem.className='btn btn-sm btn-outline-danger'; rem.title='Remove channel'; rem.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 .5-.5zM8 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6A.5.5 0 0 1 8 5.5zM10.5 5.5a.5.5 0 0 1 .5.5v6a.5.5 0 0 1-1 0v-6a.5.5 0 0 1 .5-.5z"/><path fill-rule="evenodd" d="M14.5 3a1 1 0 0 1-1 1H13v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V4h-.5a1 1 0 0 1 0-2h3.11a1 1 0 0 1 .9-.6h2.98c.35 0 .68.21.9.6H14.5a1 1 0 0 1 1 1zM4.118 4L4 4.059V13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V4.059L11.882 4H4.118z"/></svg>'; rem.onclick = ()=> removeChannel(ch.url);
+          // Reset button to clear archive/logs and optionally delete output files
+          const resetLeft = document.createElement('button'); resetLeft.className='btn btn-sm btn-outline-secondary ms-2'; resetLeft.title='Reset channel state'; resetLeft.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 1 1 .908-.418A6 6 0 1 1 8 2v1z"/><path d="M8 1a.5.5 0 0 1 .5.5V4h2.5a.5.5 0 0 1 0 1H8A1 1 0 0 1 7 4V1.5A.5.5 0 0 1 8 1z"/></svg>';
+          resetLeft.onclick = async ()=>{
+            if(!confirm('Reset channel state (archive and logs)? Click OK to reset.')) return;
+            const del = confirm('Also delete files in the channel output directory? (This will remove files permanently)');
+            try{
+              const r = await fetch('/api/channel/reset',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: ch.url, clear_out: del})});
+              const j = await r.json().catch(()=>({}));
+              if(r.ok) { await loadStatus(); alert('Channel reset'); } else { alert('Reset failed: '+JSON.stringify(j)); }
+            }catch(e){ alert('Reset failed: '+e); }
+          };
+          btns.appendChild(rem); btns.appendChild(resetLeft); li.appendChild(name); li.appendChild(btns); chlist.appendChild(li);
+
+          // right panel - reuse existing
+          let elems = channelElems.get(ch.url);
+          if(!elems){
+            elems = makeChannelCard(ch);
+            channelElems.set(ch.url, elems);
+            container.appendChild(elems.card);
+          }
+          // update badge/meta
+          elems.badges.innerHTML = `Status: <span class="badge bg-${ch.is_running? 'success' : (ch.last_status && ch.last_status.startsWith('failed')? 'danger':'secondary')}">${ch.is_running? 'running' : (ch.last_status || 'idle')}</span>`;
+          elems.meta = elems.card.querySelector('.small.text-muted') || document.createElement('p'); elems.meta.className='small text-muted'; elems.meta.textContent = `Last run: ${ch.last_run||'N/A'} • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`;
+          // update channel-level progress bar and counter
+          const chanWrap = elems.card.querySelector('.progress');
+          const chanBar = chanWrap ? chanWrap.querySelector('.progress-bar') : null;
+          const chanCounter = elems.card.querySelector('.small.mt-1') || elems.card.querySelector('.small.text-muted.mt-1');
+          // update channel-level progress based on active items
+          try{
+            const chanBarElem = chanProgressWrap.querySelector('.progress-bar');
+            if(ch.active_items && ch.active_items.length){
+              let totalPct = 0; let count = 0;
+              ch.active_items.forEach(it=>{ if(it.percent){ const p = parseFloat(it.percent.toString().replace('%','')) || 0; totalPct += p; count++; } });
+              const avg = count? Math.round(totalPct / count) : 0;
+              chanBarElem.style.width = avg + '%'; chanBarElem.textContent = avg + '%';
+              chanCounter.textContent = `${ch.active_items.length} active • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`;
+            } else {
+              chanBarElem.style.width = '0%'; chanBarElem.textContent = '';
+              chanCounter.textContent = `No active downloads • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`;
+            }
+          }catch(e){ /* ignore UI update errors */ }
+          if(ch.active_items && ch.active_items.length){
+            // compute average percent across active items
+            let totalPct = 0; let count = 0;
+            ch.active_items.forEach(it=>{ if(it.percent){ const p = parseFloat(it.percent.toString().replace('%','')) || 0; totalPct += p; count++; } });
+            const avg = count? Math.round(totalPct / count) : 0;
+            if(chanBar){ chanBar.style.width = avg + '%'; chanBar.textContent = avg + '%'; }
+            if(chanCounter){ chanCounter.textContent = `${ch.active_items.length} active • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`; }
+          } else {
+            if(chanBar){ chanBar.style.width = '0%'; chanBar.textContent = ''; }
+            if(chanCounter){ chanCounter.textContent = `No active downloads • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`; }
+          }
+          // update or create active downloads area
+          let activeDiv = elems.card.querySelector('.active-downloads');
+          if(!activeDiv){ activeDiv = document.createElement('div'); activeDiv.className='active-downloads mb-2'; elems.cardBody.appendChild(activeDiv); }
+          activeDiv.innerHTML = '';
+          // channel controls
+          const ctrlRow = document.createElement('div'); ctrlRow.className='mt-2 mb-2 d-flex align-items-center gap-2';
+          const startBtn = document.createElement('button'); startBtn.className='btn btn-modern btn-success btn-sm'; startBtn.textContent='Start';
+          startBtn.onclick = async ()=>{ try{ await fetch('/api/channel/start',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: ch.url})}); await loadStatus(); }catch(e){ alert('Failed: '+e); } };
+          const stopBtn = document.createElement('button'); stopBtn.className='btn btn-modern btn-outline-danger btn-sm'; stopBtn.textContent='Stop';
+          stopBtn.onclick = async ()=>{ if(!confirm('Stop channel?')) return; try{ await fetch('/api/channel/stop',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: ch.url})}); await loadStatus(); }catch(e){ alert('Failed: '+e); } };
+          ctrlRow.appendChild(startBtn); ctrlRow.appendChild(stopBtn);
+          const outInfo = document.createElement('span'); outInfo.className='small text-muted'; outInfo.textContent = `Platform: ${ch.platform} • Out: ${ch.out_dir}`;
+          ctrlRow.appendChild(outInfo);
+          activeDiv.appendChild(ctrlRow);
+
+          if(ch.active_items && ch.active_items.length){
+            const title = document.createElement('div'); title.className='fw-bold'; title.textContent = 'Active downloads:'; activeDiv.appendChild(title);
+            ch.active_items.forEach(it=>{
+              const row = document.createElement('div'); row.className='mb-2';
+              const label = document.createElement('div'); label.textContent = it.name;
+              const barWrap = document.createElement('div'); barWrap.className = 'progress mb-1';
+              const bar = document.createElement('div');
+              bar.className = 'progress-bar';
+              let pct = 0; if(it.percent){ pct = parseFloat(it.percent.toString().replace('%','')) || 0 }
+              bar.style.width = pct + '%';
+              bar.textContent = it.percent || '';
+              barWrap.appendChild(bar);
+              const meta = document.createElement('div'); meta.className='small text-muted'; meta.textContent = `${it.speed||''} ${it.eta?('ETA '+it.eta):''}`;
+              const pauseDl = document.createElement('button'); pauseDl.className='btn btn-sm btn-outline-warning ms-2'; pauseDl.title='Pause download'; pauseDl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 3.5A.5.5 0 0 1 6 3h1a.5.5 0 0 1 .5.5v9A.5.5 0 0 1 7 13h-1a.5.5 0 0 1-.5-.5v-9zM9.5 3.5A.5.5 0 0 1 10 3h1a.5.5 0 0 1 .5.5v9A.5.5 0 0 1 11 13h-1a.5.5 0 0 1-.5-.5v-9z"/></svg>';
+              pauseDl.onclick = async ()=>{ if(!confirm('Pause this download?')) return; try{ await fetch('/api/download/pause',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({channel: ch.url, name: it.name})}); await loadStatus(); }catch(e){ alert('Failed: '+e); } };
+              row.appendChild(label); row.appendChild(barWrap); row.appendChild(meta); row.appendChild(pauseDl);
+              activeDiv.appendChild(row);
+            });
+          }
+
+          // completed accordion
+          let compList = elems.card.querySelector('.completed-list');
+          if(!compList){
+            const compBtn = document.createElement('button'); compBtn.className='btn btn-sm btn-link'; compBtn.textContent = 'Show Completed';
+            const compDiv = document.createElement('div'); compDiv.className='collapse mt-2 completed-list';
+            compBtn.onclick = ()=>{ compDiv.classList.toggle('show'); };
+            activeDiv.appendChild(compBtn);
+            activeDiv.appendChild(compDiv);
+            compList = compDiv;
+          }
+          compList.innerHTML = '';
+          if(ch.recently_completed && ch.recently_completed.length){
+            ch.recently_completed.forEach(c=>{ const d = document.createElement('div'); d.className='small'; d.textContent = c; compList.appendChild(d); });
+          }
+        });
+        // remove cards for channels that no longer exist
+        for(const k of Array.from(channelElems.keys())){
+          if(!seen.has(k)){
+            const el = channelElems.get(k);
+            if(el && el.card && el.card.parentNode) el.card.parentNode.removeChild(el.card);
+            channelElems.delete(k);
+          }
+        }
+
+      }
+
+      function renderChannels(list){
+        const container = document.getElementById('channels_container');
+        const chlist = document.getElementById('channel_list');
+        // preserve which logs are currently open so we don't auto-close them on refresh
+        const openLogs = new Set();
+        document.querySelectorAll('pre.log:not(.d-none)').forEach(p=>{ const u = p.getAttribute('data-url'); if(u) openLogs.add(u); });
+        container.innerHTML = '';
+        chlist.innerHTML = '';
+        list.forEach(ch => {
+          // left panel list
+          const li = document.createElement('li');
+          li.className = 'list-group-item d-flex justify-content-between align-items-start';
+          const name = document.createElement('div');
+          name.textContent = ch.url;
+          const btns = document.createElement('div');
+          const rem = document.createElement('button');
+          rem.className = 'btn btn-sm btn-outline-danger';
+          rem.textContent = 'Remove';
+          rem.onclick = ()=> removeChannel(ch.url);
+          btns.appendChild(rem);
+          li.appendChild(name);
+          li.appendChild(btns);
+          chlist.appendChild(li);
+
+          // right panel status card
+          const card = document.createElement('div');
+          card.className = 'card mb-3';
+          const cardBody = document.createElement('div');
+          cardBody.className = 'card-body';
+          const h5 = document.createElement('h5');
+          h5.className = 'card-title';
+          h5.textContent = ch.url;
+          const badges = document.createElement('p');
+          badges.innerHTML = `Status: <span class="badge bg-${ch.is_running? 'success' : (ch.last_status && ch.last_status.startsWith('failed')? 'danger':'secondary')}">${ch.is_running? 'running' : (ch.last_status || 'idle')}</span>`;
+          const meta = document.createElement('p');
+          meta.className = 'small text-muted';
+          meta.textContent = `Last run: ${ch.last_run||'N/A'} • Total downloads: ${ch.total_downloads} • Total videos: ${typeof ch.total_videos !== 'undefined' && ch.total_videos !== null ? ch.total_videos : 'unknown'}`;
+
+          // channel-level progress container
+          const chanProgressWrap = document.createElement('div'); chanProgressWrap.className = 'mb-2';
+          const chanProgressBar = document.createElement('div'); chanProgressBar.className = 'progress';
+          const chanBar = document.createElement('div'); chanBar.className = 'progress-bar'; chanBar.style.width = '0%'; chanBar.textContent = '';
+          chanProgressBar.appendChild(chanBar);
+          const chanCounter = document.createElement('div'); chanCounter.className = 'small text-muted mt-1'; chanCounter.textContent = '';
+          chanProgressWrap.appendChild(chanProgressBar); chanProgressWrap.appendChild(chanCounter);
+
+          const logBtn = document.createElement('button');
+          logBtn.className = 'btn btn-sm btn-outline-secondary me-2 mb-2';
+          logBtn.title = 'Show log';
+          logBtn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 7a.5.5 0 0 1 0-1h5a.5.5 0 0 1 0 1h-5zM5 9.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"/><path d="M14 4.5V14a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2h6.5L14 4.5zM13.5 4L10 0.5V4a.5.5 0 0 0 .5.5H13.5z"/></svg>';
+          const logPre = document.createElement('pre');
+          logPre.className = 'log d-none';
+          logPre.setAttribute('data-url', ch.url);
+          logPre.textContent = '';
+          logBtn.onclick = async ()=>{ toggleLog(ch.url, logPre); };
+
+          // auto-open if previously open
+          if(openLogs.has(ch.url)){
+            (async ()=>{ logPre.classList.remove('d-none'); logPre.textContent='Loading...'; try{ const r=await apiGet('/api/log?channel='+encodeURIComponent(ch.url)); logPre.textContent = r.lines.join('\n'); }catch(e){ logPre.textContent='Failed to load log: '+e; } })();
+          }
+
+          // active downloads list
+          const activeDiv = document.createElement('div');
+          activeDiv.className = 'mb-2';
+          // Channel control buttons: pause/resume
+          const ctrlRow = document.createElement('div'); ctrlRow.className = 'mt-2 mb-2';
+          const pauseBtn = document.createElement('button'); pauseBtn.className='btn btn-sm btn-warning me-2'; pauseBtn.textContent = ch.paused? 'Resume channel' : 'Pause channel';
+          pauseBtn.onclick = async ()=>{ try{ const ep = ch.paused? '/api/channel/resume' : '/api/channel/pause'; await fetch(ep, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url: ch.url})}); await loadStatus(); }catch(e){ alert('Failed: '+e); } };
+          ctrlRow.appendChild(pauseBtn);
+          const outInfo = document.createElement('span'); outInfo.className='small text-muted'; outInfo.textContent = `Platform: ${ch.platform} • Out: ${ch.out_dir}`;
+          ctrlRow.appendChild(outInfo);
+          activeDiv.appendChild(ctrlRow);
+
+          if(ch.active_items && ch.active_items.length){
+            const title = document.createElement('div'); title.className='fw-bold'; title.textContent = 'Active downloads:'; activeDiv.appendChild(title);
+            ch.active_items.forEach(it=>{
+              const row = document.createElement('div'); row.className='mb-2';
+              const label = document.createElement('div'); label.textContent = it.name;
+              const barWrap = document.createElement('div'); barWrap.className = 'progress mb-1';
+              const bar = document.createElement('div');
+              bar.className = 'progress-bar';
+              let pct = 0; if(it.percent){ pct = parseFloat(it.percent.toString().replace('%','')) || 0 }
+              bar.style.width = pct + '%';
+              bar.textContent = it.percent || '';
+              barWrap.appendChild(bar);
+              const meta = document.createElement('div'); meta.className='small text-muted'; meta.textContent = `${it.speed||''} ${it.eta?('ETA '+it.eta):''}`;
+              const pauseDl = document.createElement('button'); pauseDl.className='btn btn-sm btn-outline-warning ms-2'; pauseDl.title='Pause download'; pauseDl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 3.5A.5.5 0 0 1 6 3h1a.5.5 0 0 1 .5.5v9A.5.5 0 0 1 7 13h-1a.5.5 0 0 1-.5-.5v-9zM9.5 3.5A.5.5 0 0 1 10 3h1a.5.5 0 0 1 .5.5v9A.5.5 0 0 1 11 13h-1a.5.5 0 0 1-.5-.5v-9z"/></svg>';
+              pauseDl.onclick = async ()=>{ if(!confirm('Pause this download?')) return; try{ await fetch('/api/download/pause',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({channel: ch.url, name: it.name})}); await loadStatus(); }catch(e){ alert('Failed: '+e); } };
+              row.appendChild(label); row.appendChild(barWrap); row.appendChild(meta); row.appendChild(pauseDl);
+              activeDiv.appendChild(row);
+            });
+          }
+
+          // completed accordion
+          const compId = 'comp_' + encodeURIComponent(ch.url);
+          const compBtn = document.createElement('button'); compBtn.className='btn btn-sm btn-link'; compBtn.textContent = 'Show Completed';
+          const compList = document.createElement('div'); compList.className='collapse mt-2'; compList.id = compId;
+          compBtn.onclick = ()=>{ compList.classList.toggle('show'); };
+          if(ch.recently_completed && ch.recently_completed.length){
+            ch.recently_completed.forEach(c=>{ const d = document.createElement('div'); d.className='small'; d.textContent = c; compList.appendChild(d); });
+          }
+          activeDiv.appendChild(compBtn);
+          activeDiv.appendChild(compList);
+
+          cardBody.appendChild(h5);
+          cardBody.appendChild(badges);
+          cardBody.appendChild(meta);
+          cardBody.appendChild(chanProgressWrap);
+          cardBody.appendChild(activeDiv);
+          cardBody.appendChild(logBtn);
+          cardBody.appendChild(logPre);
+          card.appendChild(cardBody);
+          container.appendChild(card);
+        });
+      }
+
+      async function addChannel(){
+        const url = document.getElementById('ch_url').value.trim();
+        const feedback = document.getElementById('add_feedback');
+        feedback.innerHTML = '';
+        if(!url){ feedback.innerHTML = '<div class="alert alert-warning">Enter a URL</div>'; return; }
+        document.getElementById('add_btn').disabled = true;
+        try{
+          const r = await fetch('/api/channels', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url})});
+          const j = await r.json();
+          if(r.ok){
+            feedback.innerHTML = '<div class="alert alert-success">Added</div>';
+            document.getElementById('ch_url').value='';
+            await loadStatus();
+          }else{
+            feedback.innerHTML = `<div class="alert alert-danger">${j.error||JSON.stringify(j)}</div>`;
+          }
+        }catch(e){ feedback.innerHTML = `<div class="alert alert-danger">Failed: ${e}</div>`; }
+        document.getElementById('add_btn').disabled = false;
+      }
+
+      async function removeChannel(url){
+        if(!confirm('Remove channel?')) return;
+        try{
+          const r = await fetch('/api/channels', {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({url})});
+          const j = await r.json();
+          if(r.ok){
+            await loadStatus();
+          }else{
+            alert('Failed: ' + JSON.stringify(j));
+          }
+        }catch(e){ alert('Failed: '+e); }
+      }
+
+  // Handlers are attached inside DOMContentLoaded with defensive checks above.
+
+      // initial poll and periodic update
+      loadStatus();
+      setInterval(loadStatus, STATUS_POLL);
+    </script>
+        <footer class="text-center small text-muted mt-4 mb-4">
+          Additional features and GUI by <a href="https://kongsbergkonsult.no" target="_blank" rel="noopener">Tommy A. Hansen</a>.
+        </footer>
+  </body>
+</html>
