@@ -32,6 +32,25 @@ pip install -r devscripts/requirements-web.txt
 python3 devscripts/web_monitor.py --channels devscripts/channels.txt --output-dir downloads --archive-dir .archives --host 127.0.0.1 --port 8080
 ```
 
+Web UI login (basic auth)
+
+The web monitor supports simple HTTP Basic authentication. Provide a username and password when starting the server using the `--auth-user` and `--auth-pass` options.
+
+Windows (PowerShell) example:
+```powershell
+# Starts the monitor with basic auth username 'admin' and password 'S3cr3tP@ss'
+python -u devscripts/web_monitor.py --channels devscripts/channels.txt --output-dir downloads --archive-dir .archives --host 127.0.0.1 --port 8080 --auth-user admin --auth-pass 'S3cr3tP@ss'
+```
+
+Linux / macOS (bash) example:
+```bash
+python3 devscripts/web_monitor.py --channels devscripts/channels.txt --output-dir downloads --archive-dir .archives --host 127.0.0.1 --port 8080 --auth-user admin --auth-pass 'S3cr3tP@ss'
+```
+
+Security notes:
+- Passing a password on the command line may expose it to other local users via process listings on some systems. For production use prefer running the monitor behind a reverse proxy (for example nginx) that performs TLS termination and authentication, or start the server from a service manager (systemd/Windows Service) with protected environment/argument handling.
+- If you expose the monitor to external networks, always use HTTPS (reverse proxy) and firewall rules to limit access.
+
 Notes:
 
 - Use `--host 0.0.0.0` to listen on all interfaces and a reverse proxy (e.g., nginx) or systemd to run in production.
