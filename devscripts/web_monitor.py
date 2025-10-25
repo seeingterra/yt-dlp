@@ -32,6 +32,18 @@ from urllib.parse import urlsplit, unquote
 import requests
 from flask import Flask, jsonify, redirect, render_template, request, url_for, send_file
 import shutil
+import os
+
+# Try to load .env if python-dotenv is available; falling back to environment variables.
+try:
+    from dotenv import load_dotenv
+    # load .env from repository root (same dir as this file's parent parent) then cwd
+    repo_root = Path(__file__).parent.parent
+    load_dotenv(repo_root / '.env')
+    load_dotenv()
+except Exception:
+    # python-dotenv not installed; rely on existing environment variables
+    pass
 
 
 LOG = logging.getLogger("web_monitor")
@@ -1101,8 +1113,12 @@ def download_file():
 def run_app(args):
     global monitor
     global _AUTH_USER, _AUTH_PASS
-    _AUTH_USER = args.auth_user
-    _AUTH_PASS = args.auth_pass
+    # Determine auth credentials using this precedence (highest -> lowest):
+    # 1. CLI args (--auth-user / --auth-pass)
+    # 2. Environment variables YTDLP_MONITOR_USER / YTDLP_MONITOR_PASS (.env can set these)
+    # 3. No auth (None)
+    _AUTH_USER = args.auth_user or os.environ.get('YTDLP_MONITOR_USER')
+    _AUTH_PASS = args.auth_pass or os.environ.get('YTDLP_MONITOR_PASS')
     channels_file = Path(args.channels).expanduser().resolve()
     archive_dir = Path(args.archive_dir).expanduser().resolve()
     out_dir = Path(args.output_dir).expanduser().resolve()
